@@ -1,0 +1,314 @@
+create database filesharedb;
+
+use filesharedb;
+
+create table users
+(
+userid varchar(50) primary key,
+pswd varchar(50),
+usernm varchar(80),
+usertype varchar(30),
+userstatus varchar(30)
+);
+
+insert into users values('cloudadmin','admin','Cloud 
+Admin','admin','active');
+
+create table loginlog
+(
+logid integer primary key identity(305,2),
+userid varchar(50),
+usertype varchar(30),
+logindt varchar(30) default Format(GetDate(), 'dd/MM/yyyy'),
+logintime varchar(30) default Format(GetDate(), 'HH:mm:ss'),
+sessionid varchar(50)
+);
+
+
+create table usagelog
+(
+id integer primary key identity(1001,1),
+userid varchar(60),
+service varchar(30),
+usedate integer,
+usemonth integer,
+useyear integer,
+);
+
+
+
+create table servicecharges
+(
+id integer primary key identity(1001,1),
+service varchar(30),
+rent float
+);
+
+
+create table clientpersonal
+(
+id integer primary key identity(9001,1),
+name varchar(60),
+photo varchar(30),
+mobile varchar(30),
+emailid varchar(80),
+dob varchar(30),
+userid varchar(60),
+secques varchar(50),
+answer varchar(50),
+status varchar(20)
+);
+
+
+
+create table uploads
+(
+uploadid integer primary key,
+docname varchar(60),
+filesize bigint,
+description varchar(1000),
+userid varchar(60),
+docsha varchar(200),
+dockey varchar(max),
+seckey varchar(max),
+uploaddt varchar(40),
+uploadtime varchar(40),
+docstatus varchar(30),
+filename varchar(100)
+);
+
+
+create table filepermissions
+(
+id integer primary key identity(321,2),
+uploadid integer,
+userid varchar(50),
+status varchar(20)
+);
+
+CREATE TABLE cloudpayments
+(
+id int PRIMARY KEY IDENTITY(1001,1),
+userid varchar(60) ,
+rentmonth int DEFAULT (datepart(month,getdate())),
+rentyear int DEFAULT (datepart(year,getdate())),
+amount float ,
+paydate varchar(30) ,
+paystatus varchar(30) DEFAULT ('pending'),
+paymode varchar(50)
+);
+
+
+---------------------------------------------------
+Stored Procedures
+---------------------------------------------------
+
+create procedure Authenticate 
+@uid varchar(80),
+@pass varchar(80)
+as
+select * from users where userid=@uid and pswd=@pass and userstatus='active';
+
+
+create procedure NewClient
+@name varchar(60),
+@photo varchar(30),
+@mobile varchar(30),
+@emailid varchar(80),
+@dob varchar(30),
+@userid varchar(60),
+@secques varchar(50),
+@answer varchar(50),
+@pass varchar(60)
+as
+insert into clientpersonal values(@name,@photo,@mobile,@emailid,
+@dob,@userid,@secques,@answer,'deactive');
+insert into users values(@userid,@pass,@name,'user','deactive');
+
+
+create procedure GetPendingClients
+as
+select * from clientpersonal where status='deactive';
+
+
+create procedure ProcessClientsRequests
+@userid varchar(60),
+@status varchar(40)
+as
+update clientpersonal set status=@status where userid=@userid;
+if @status='approved'
+update users set userstatus='active' where userid=@userid;
+
+
+create procedure UpdateClient
+@name varchar(60),
+@mobile varchar(30),
+@emailid varchar(80),
+@dob varchar(30),
+@secques varchar(50),
+@answer varchar(50),
+@userid varchar(60)
+as
+update clientpersonal set name=@name,mobile=@mobile,emailid=@emailid,
+dob=@dob,secques=@secques,answer=@answer where userid=@userid;
+update users set usernm=@name where userid=@userid;
+
+
+create procedure TrackLogin
+@userid varchar(50),
+@usertype varchar(30),
+@sessionid varchar(50)
+as
+insert into loginlog values(@userid,@usertype,default,default,@sessionid);
+
+
+create procedure NewDocument
+@uploadid integer,
+@docname varchar(60),
+@filesize bigint,
+@desc varchar(1000),
+@userid varchar(60),
+@dochash varchar(200),
+@seckey varchar(max),
+@userkey varchar(max),
+@uploaddt varchar(40),
+@uploadtime varchar(40),
+@filename varchar(100)
+as
+insert into uploads values
+(@uploadid,@docname,@filesize,@desc,@userid,@dochash,
+EncryptByPassPhrase(@userkey,@seckey),
+EncryptByPassPhrase(concat('skey#',@uploadid),@userkey),
+@uploaddt,@uploadtime,'exists',@filename);
+insert into filepermissions values(@uploadid,@userid,'active');
+
+
+
+create procedure GetUserKey
+@uploadid integer
+as
+select convert(varchar,DecryptByPassPhrase(concat('skey#',uploadid),userkey)) as ukey 
+from uploads where uploadid=@uploadid and docstatus='exists';
+
+
+create procedure GetDocSecKey
+@uploadid integer,
+@userkey varchar(50)
+as
+select convert(varchar,DecryptByPassPhrase(@userkey,seckey)) as seckey 
+from uploads where uploadid=@uploadid and docstatus='exists';
+
+
+
+create procedure newfilepermission
+@uploadid integer,
+@userid varchar(50)
+as
+insert into filepermissions values(@uploadid,@userid,'active');
+
+
+create procedure AddPayment
+@userid varchar(60),
+@rentmonth integer,
+@rentyear integer,
+@amount float,
+@paydate varchar(30),
+@type varchar(20)
+as
+if @type='add'
+insert into cloudpayments values(@userid,default,default,@amount,'NA',default,'NA');
+else
+update cloudpayments set amount=@amount,paydate=@paydate where rentmonth=@rentmonth and rentyear=@rentyear and userid=@userid;
+
+
+
+create procedure GetPayments
+@userid varchar(60),
+@rentmonth integer,
+@rentyear integer,
+@status varchar(20)
+as
+if @userid='NA'
+select p.id,p.userid,u.usernm,p.rentmonth,p.rentyear,p.amount,p.paydate,p.paystatus,p.paymode 
+from cloudpayments p,users u where p.userid=u.userid and paystatus=@status 
+and rentmonth=@rentmonth and rentyear=@rentyear;
+else
+select p.id,p.userid,u.usernm,p.rentmonth,p.rentyear,p.amount,p.paydate,p.paystatus,p.paymode 
+from cloudpayments p,users u where p.userid=@userid and p.userid=u.userid and paystatus=@status 
+and rentmonth=@rentmonth and rentyear=@rentyear;
+
+
+create procedure processclient
+@userid varchar(50),
+@status varchar(30)
+as
+update users set userstatus=@status where userid=@userid;
+update filepermissions set status=@status where userid=@userid;
+update uploads set docstatus=@status where userid=@userid;
+if @status='active'
+update uploads set docstatus='exists' where userid=@userid;
+
+
+
+------------------------------------
+Views
+------------------------------------
+
+create view getpermitteddocs
+as
+select p.id,p.uploadid,p.userid as memberid,docname,filesize,uploaddt,uploadtime,description,p.status,u.userid as owner,usernm 
+from filepermissions p, uploads u,users us where p.uploadid=u.uploadid and 
+p.status='active' and u.userid=us.userid;
+
+
+
+create view mydocspermissions
+as
+select id,uploadid,docname,memberid,u.usernm,p.status,owner from getpermitteddocs p,users u 
+where p.memberid=u.userid ;
+
+
+
+
+
+------------------------------------
+Triggers
+------------------------------------
+
+create trigger trigstatus
+on users
+
+for update
+
+as
+
+if (select userstatus from inserted)='active'
+update clientpersonal set status='approved' where userid=(select userid from inserted)
+else
+update clientpersonal set status='deactive' where userid=(select userid from inserted)
+
+
+
+
+------------------------------------
+Support Queries
+------------------------------------
+
+/* Get User Secrete Key */
+select uploadid,convert(varchar,DecryptByPassPhrase(concat('skey#',uploadid),userkey)) as ukey 
+from uploads
+
+
+/* Get Document Secrete Key : never needed in application */
+select convert(varchar,DecryptByPassPhrase('SEC1001@339',seckey)) as seckey 
+from uploads where uploadid=1001 and docstatus='exists';
+
+
+
+
+
+
+
+------------------------------------
+
+www.sohamglobal.com
